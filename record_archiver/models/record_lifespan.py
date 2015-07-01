@@ -57,6 +57,14 @@ class RecordLifespan(orm.Model):
             required=True,
             help="Number of month after which the records will be set to "
                  "inactive based on their write date"),
+        'notify_archive': fields.boolean(
+            'Add notification',
+            help='Post a notification on the record when it is archived',
+        )
+    }
+
+    _defaults = {
+        'notify_archive': True,
     }
 
     _sql_constraints = [
@@ -74,6 +82,16 @@ class RecordLifespan(orm.Model):
                 _logger.error("Archiver error:\n%s", e[1])
         _logger.info('Rusty Records now rest in peace')
         return True
+
+    def _do_notify_archive(self, cr, uid, lifespan, record_ids, context=None):
+        model = self.pool[lifespan.model]
+        message = _('Record automatically archived because it has not been '
+                    'modified since more than %d months.') % lifespan.months
+        for record_id in record_ids:
+            # expects one id
+            model.message_post(cr, uid, [record_id], body=message,
+                               subtype='mail.mt_comment',
+                               context=context)
 
     def _archive_domain(self, cr, uid, lifespan, expiration_date,
                         context=None):
@@ -122,6 +140,11 @@ class RecordLifespan(orm.Model):
         query = ("UPDATE %s SET active = FALSE WHERE id in %%s"
                  ) % model._table
         cr.execute(query, (tuple(rec_ids),))
+
+        if lifespan.notify_archive:
+            self._do_notify_archive(cr, uid, lifespan, rec_ids,
+                                    context=context)
+
         _logger.info(
             'Archived %s %s older than %s',
             len(rec_ids), lifespan.model, expiration_date)
