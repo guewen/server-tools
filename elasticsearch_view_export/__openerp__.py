@@ -77,6 +77,7 @@ To contribute to this module, please visit http://odoo-community.org.
  'external_dependencies': {'python': ['elasticsearch']},
  'data': ['views/elasticsearch_host_views.xml',
           'views/elasticsearch_view_index_views.xml',
+          'data/elasticsearch_cron.xml',
           'security/ir.model.access.csv',
           ],
  'installable': True,
