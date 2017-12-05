@@ -22,6 +22,7 @@
 from openerp import SUPERUSER_ID
 
 import openerp
+import odoo.modules.registry
 from openerp import http
 from openerp.http import request
 from openerp.addons.web.controllers import main
@@ -43,37 +44,39 @@ class Home(main.Home):
     @http.route('/web', type='http', auth="none")
     def web_client(self, s_action=None, **kw):
         main.ensure_db()
+
         try:
             self._bind_http_remote_user(http.request.session.db)
         except http.AuthenticationError:
             return werkzeug.exceptions.Unauthorized().get_response()
         return super(Home, self).web_client(s_action, **kw)
 
-    def _search_user(self, res_users, login, cr):
-        user_ids = res_users.search(cr, SUPERUSER_ID, [('login', '=', login),
-                                                       ('active', '=', True)])
-        assert len(user_ids) < 2
-        if user_ids:
-            return user_ids[0]
-        return None
+    def _search_user(self, env, login):
+        users = env['res.users'].sudo().search(
+            [('login', '=', login),
+             ('active', '=', True)]
+        )
+        assert len(users) < 2
+        return users
 
     def _bind_http_remote_user(self, db_name):
         try:
-            registry = openerp.registry(db_name)
+            registry = odoo.registry(db_name)
+            if AuthFromHttpRemoteUserInstalled._name not in request.env:
+                # module not installed in database,
+                # continue usual behavior
+                return
+
+            headers = http.request.httprequest.headers.environ
+
+            login = headers.get(self._REMOTE_USER_ATTRIBUTE, None)
+            if not login:
+                # no HTTP_REMOTE_USER header,
+                # continue usual behavior
+                return
+
             with registry.cursor() as cr:
-                if AuthFromHttpRemoteUserInstalled._name not in registry:
-                    # module not installed in database,
-                    # continue usual behavior
-                    return
-
-                headers = http.request.httprequest.headers.environ
-
-                login = headers.get(self._REMOTE_USER_ATTRIBUTE, None)
-                if not login:
-                    # no HTTP_REMOTE_USER header,
-                    # continue usual behavior
-                    return
-
+                env = odoo.api.Environment(cr, odoo.SUPERUSER_ID, {})
                 request_login = request.session.login
                 if request_login:
                     if request_login == login:
@@ -81,25 +84,24 @@ class Home(main.Home):
                         return
                     else:
                         request.session.logout(keep_db=True)
-
-                res_users = registry.get('res.users')
-                user_id = self._search_user(res_users, login, cr)
-                if not user_id:
+                user = self._search_user(env, login)
+                if not user:
                     # HTTP_REMOTE_USER login not found in database
                     request.session.logout(keep_db=True)
                     raise http.AuthenticationError()
 
                 # generate a specific key for authentication
                 key = randomString(utils.KEY_LENGTH, '0123456789abcdef')
-                res_users.write(cr, SUPERUSER_ID, [user_id], {'sso_key': key})
+                user.write({'sso_key': key})
             request.session.authenticate(db_name, login=login,
-                                         password=key, uid=user_id)
-        except http.AuthenticationError, e:
+                                         password=key, uid=user.id)
+        except http.AuthenticationError as e:
             raise e
-        except Exception, e:
+        except Exception as e:
             _logger.error("Error binding Http Remote User session",
                           exc_info=True)
             raise e
+
 
 randrange = random.SystemRandom().randrange
 

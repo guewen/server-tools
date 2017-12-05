@@ -19,42 +19,36 @@
 #
 ##############################################################################
 
-from openerp.modules.registry import RegistryManager
-from openerp.osv import orm, fields
-from openerp import SUPERUSER_ID
+from openerp import fields, models
 import openerp.exceptions
 from openerp.addons.auth_from_http_remote_user import utils
 
 
-class res_users(orm.Model):
+class res_users(models.Model):
     _inherit = 'res.users'
 
-    _columns = {
-        'sso_key': fields.char('SSO Key', size=utils.KEY_LENGTH,
-                               readonly=True),
-    }
+    sso_key = fields.Char('SSO Key',
+                          size=utils.KEY_LENGTH,
+                          copy=False,
+                          readonly=True)
 
-    def copy(self, cr, uid, rid, defaults=None, context=None):
-        defaults = defaults or {}
-        defaults['sso_key'] = False
-        return super(res_users, self).copy(cr, uid, rid, defaults, context)
-
-    def check_credentials(self, cr, uid, password):
+    def check_credentials(self, password):
         try:
-            return super(res_users, self).check_credentials(cr, uid, password)
+            return super(res_users, self).check_credentials(password)
         except openerp.exceptions.AccessDenied:
-            res = self.search(cr, SUPERUSER_ID, [('id', '=', uid),
-                                                 ('sso_key', '=', password)])
+            res = self.sudo().search([('id', '=', self.env.uid),
+                                      ('sso_key', '=', password)])
             if not res:
                 raise openerp.exceptions.AccessDenied()
 
-    def check(self, db, uid, passwd):
+    @classmethod
+    def check(cls, db, uid, passwd):
         try:
-            return super(res_users, self).check(db, uid, passwd)
+            return super(res_users, cls).check(db, uid, passwd)
         except openerp.exceptions.AccessDenied:
             if not passwd:
                 raise
-            with RegistryManager.get(db).cursor() as cr:
+            with cls.pool.cursor() as cr:
                 cr.execute('''SELECT COUNT(1)
                                 FROM res_users
                                WHERE id=%s
@@ -62,4 +56,4 @@ class res_users(orm.Model):
                                  AND active=%s''', (int(uid), passwd, True))
                 if not cr.fetchone()[0]:
                     raise
-                self._uid_cache.setdefault(db, {})[uid] = passwd
+                cls.__uid_cache.setdefault(db, {})[uid] = passwd
